@@ -34,6 +34,33 @@ int connection(){
     }
 
     //handle incoming connections
+    int rec;
+    socklen_t length;  //it's just an unsigned int under the hood
+    while(1){
+        if((rec = accept(sock, (struct sockaddr*) &addr, &length)) < 0){
+            perror("Error accepting connection");
+            return -1;
+        }
+
+        pid_t pid = fork();
+        if(pid < 0){
+            perror("Error forking");
+            return -1;
+        }
+        if(pid == 0){
+            //we are in the child process
+            /*
+                Read the HTTP request from the socket and make a connection to the
+                specified server
+
+                then go into a while loop that will maintain a connection until there
+                is no more data to pull or the client connection closes
+            */
+        }
+        if(pid > 0){
+            //we are in the parent process
+        }
+    }
 
     return 0;
 }
