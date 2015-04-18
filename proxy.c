@@ -5,8 +5,10 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <errno.h>
 
 #define MB 1000000
+#define MAX_LENGTH 256
 
 int port;
 int cache_size; // in megabytes
@@ -56,6 +58,20 @@ int connection(){
                 then go into a while loop that will maintain a connection until there
                 is no more data to pull or the client connection closes
             */
+            char buf[MAX_LENGTH];
+            if((read(rec, buf, MAX_LENGTH))<0){
+                printf("Error reading from connection: %s\n", strerror(errno));
+            }
+
+            char* token;
+            char method[MAX_LENGTH], host[MAX_LENGTH], path[MAX_LENGTH], version[MAX_LENGTH];
+
+            token = strtok(buf," ");
+            if(token==NULL){perror("could not get method\n");return -1;}
+            strcpy(method,token);
+
+
+
         }
         if(pid > 0){
             //we are in the parent process
