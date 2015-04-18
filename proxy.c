@@ -8,7 +8,7 @@
 #include <errno.h>
 
 #define MB 1000000
-#define MAX_LENGTH 256
+#define MAX_LENGTH 512
 
 int port;
 int cache_size; // in megabytes
@@ -64,11 +64,17 @@ int connection(){
             }
 
             char* token;
-            char method[MAX_LENGTH], host[MAX_LENGTH], path[MAX_LENGTH], version[MAX_LENGTH];
+            char method[MAX_LENGTH], url[MAX_LENGTH], path[MAX_LENGTH], version[MAX_LENGTH];
+
+            printf("String: %s\n", buf);
 
             token = strtok(buf," ");
             if(token==NULL){perror("could not get method\n");return -1;}
             strcpy(method,token);
+
+            token = strtok(buf," ");
+            if(token==NULL){perror("could not get URL\n");return -1;}
+            strcpy(url,token);
 
 
 
