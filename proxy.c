@@ -10,8 +10,14 @@
 #include <netdb.h>
 #include <pthread.h>
 
-#define MB 1000000
-#define MAX_LENGTH 300
+#define MB					1000000
+#define BUF_SIZE			1024
+#define METHOD_BUF_SIZE		20
+#define VER_BUF_SIZE		10
+
+#define CONNECT			"CONNECT"
+#define GET				"GET"
+#define POST			"POST"
 
 int port;
 int cache_size; // in megabytes
@@ -30,6 +36,13 @@ typedef struct cache_entry{
 } cache_entry;
 
 cache_entry* cache;
+
+
+//Method Declarations
+void ignore_sigpipe();
+int Read(int fd, void *ptr, size_t nbytes);
+int Write(int fd, void *ptr, size_t nbytes);
+
 
 /*
     add an item to the cache, dealing with LRU and size overflow
@@ -114,11 +127,34 @@ int cache_getItem(char* host, char *data){
     pthread_mutex_unlock(&cacheLock);
     return -1;
 }
-//Declarations
-void ignore_sigpipe();
 
 
-int connection(int fd){
+void *parseRequest(void* args){
+	int clientfd;
+	char buf[BUF_SIZE], method[METHOD_BUF_SIZE], url[BUF_SIZE], path[BUF_SIZE], version[VER_BUF_SIZE];
+	char* token;
+ 
+	//record ards and free
+	clientfd = ((int*)args)[0];
+	free(args);
+	
+	if((Read(clientfd, buf, BUF_SIZE))<0){
+		printf("Error reading from connection: %s\n", strerror(errno));
+	}
+	
+	
+	printf("String: %s\n", buf);
+	
+	token = strtok(buf," ");
+	if(token==NULL){perror("could not get method\n");return NULL;}
+	strcpy(method,token);
+	
+	token = strtok(buf," ");
+	if(token==NULL){perror("could not get URL\n");return NULL;}
+	strcpy(url,token);
+
+	
+	
 //
 //    int sock;
 //    struct sockaddr_in addr;
@@ -191,7 +227,8 @@ int connection(int fd){
     return 0;
 }
 
-int main(int argc, char* argv[]){
+int main(int argc, char* argv[])
+{
 	int listenfd, connfd;
 	socklen_t clientlen;
 	struct sockaddr_in clientaddr;
@@ -223,18 +260,14 @@ int main(int argc, char* argv[]){
 
 	//Listen to incoming requests
 	while(1) {
-
 		clientlen = sizeof(clientaddr);
 		thread_args = malloc(sizeof(int));
-		/* Accept a new connection from a client here */
+		// Accept a new connection from a client here
 		connfd = accept(listenfd, (struct sockaddr *)&clientaddr, &clientlen);
-		/* Connection was accepted! */
-		hp = gethostbyaddr((const char *)&clientaddr.sin_addr.s_addr,
-						   sizeof(clientaddr.sin_addr.s_addr), AF_INET);
-
-		haddrp = inet_ntoa(clientaddr.sin_addr);
+		// Connection was accepted!
+		// Make new thread to handle this request.
 		thread_args[0] = connfd;
-		pthread_create(&tid, NULL, connection, (void *) thread_args);
+		pthread_create(&tid, NULL, parseRequest, thread_args);
 		pthread_detach(tid);
 	}
 	return EXIT_SUCCESS;
@@ -268,5 +301,67 @@ void ignore_sigpipe()
 
 	return;
 }
+
+//Read wrapper for handling EINTR
+int Read(int fd, void *ptr, size_t nbytes)
+{
+	int n;
+	while(1){
+		if ((n = read(fd, ptr, nbytes)) < 0) {
+			if (errno == EINTR) continue;
+		}
+		break;
+	}
+	return n;
+
+}
+
+//Reads Line
+int Readln(int fd, void *ptr, size_t nbytes)
+{
+	int n;
+	while(1){
+		if ((n = read(fd, ptr, nbytes)) < 0) {
+			if (errno == EINTR) continue;
+		}
+		break;
+	}
+	return n;
+//	Example
+	
+//	int n, rc;
+//	char c, *bufp = usrbuf;
+//	
+//	n = 0;
+//	
+//	while (n < maxlen-1){
+//		if ((rc = rio_read(rp, &c, 1)) == 1) {
+//	  n++;
+//	  *bufp++ = c;
+//	  if (c == '\n')
+//		  break;
+//		} else if (rc == 0) {
+//	  break;    /* EOF */
+//		} else
+//	  return -1;	  /* error */
+//	}
+//	*bufp = 0;
+//	return n;
+//
+}
+
+//Write wrapper for handling EINTR
+int Write(int fd, void *ptr, size_t nbytes)
+{
+	int n;
+	while(1){
+		if ((n = write(fd, ptr, nbytes)) < 0) {
+			if (errno == EINTR) continue;
+		}
+		break;
+	}
+	return n;
+}
+
 
 
