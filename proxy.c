@@ -54,7 +54,7 @@ void cache_addItem(char* host, char* data, int size){
     newItem.host = (char*)malloc(strlen(host));
     strcpy(newItem.host,host);
     newItem.data = (char*)malloc(size);
-    strcpy(newItem.data,data); //now the data is set.
+    memcpy(newItem.data,data, size); //now the data is set.
 
     newItem.next = cache;
     cache->prev = &newItem;
@@ -239,7 +239,6 @@ void *forwarder(void* args)
 	
 	while(1) {
 		numBytesRead = (int)Read(serverfd, buf1, BUF_SIZE);
-		
 		numBytesWritten = (int)Write(clientfd, buf1, numBytesRead);
 		if(numBytesRead<=0){
 			break;
