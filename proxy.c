@@ -18,12 +18,12 @@ int cache_size; // in megabytes
 
 typedef enum {false, true} bool;
 
+pthread_mutex_t cacheLock;
+
 typedef struct cache_entry{
     char* host;  //identifier for the entry
     char* data;  //the data stored
     int size;    //size of data stored
-
-    pthread_mutex_t mutex;
 
     struct cache_entry *next;
     struct cache_entry *prev;
@@ -35,6 +35,7 @@ cache_entry* cache;
     add an item to the cache, dealing with LRU and size overflow
 */
 void cache_addItem(char* host, char* data, int size){
+    pthread_mutex_lock(&cacheLock);
     cache_entry newItem;
 
     newItem.host = (char*)malloc(strlen(host));
@@ -70,6 +71,7 @@ void cache_addItem(char* host, char* data, int size){
             traverse = traverse->next;
         }
     }
+    pthread_mutex_unlock(&cacheLock);
 }
 
 /*
@@ -81,6 +83,8 @@ void cache_addItem(char* host, char* data, int size){
     This will also handle re-ordering for lru
 */
 int cache_getItem(char* host, char *data){
+    pthread_mutex_lock(&cacheLock);
+
     cache_entry *traverse = cache;
     cache_entry *head = cache;
 
@@ -89,6 +93,7 @@ int cache_getItem(char* host, char *data){
             //found the entry
             data = traverse->data;
             if(traverse!=head){
+
                 traverse->prev->next = traverse->next;
                 if(traverse->next!=NULL){
                     traverse->next->prev = traverse->prev;
@@ -100,11 +105,13 @@ int cache_getItem(char* host, char *data){
                 cache=traverse; //update the head
             }
 
+            pthread_mutex_unlock(&cacheLock);
             return 0;
         }
 
         traverse = traverse->next;
     }
+    pthread_mutex_unlock(&cacheLock);
     return -1;
 }
 //Declarations
@@ -210,6 +217,9 @@ int main(int argc, char* argv[]){
 
 	//Disabling sigpipe
 	ignore_sigpipe();
+
+    //setup the cache mutex
+    pthread_mutex_init(&cacheLock, NULL);
 
 	//Listen to incoming requests
 	while(1) {
