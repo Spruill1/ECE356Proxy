@@ -8,6 +8,7 @@
 #include <errno.h>
 #include <signal.h>
 #include <netdb.h>
+#include <pthread.h>
 
 
 
@@ -28,7 +29,7 @@ typedef struct cache_entry{
 void ignore_sigpipe();
 
 
-int connection(){
+int connection(int fd){
 //	
 //    int sock;
 //    struct sockaddr_in addr;
@@ -98,16 +99,15 @@ int connection(){
 //        }
 //    }
 //
-//    return 0;
+    return 0;
 }
 
 int main(int argc, char* argv[]){
-	int listenfd, connfd, optval, serverPort;
+	int listenfd, connfd;
 	socklen_t clientlen;
 	struct sockaddr_in clientaddr;
 	struct hostent *hp;
 	char *haddrp;
-	sigset_t sig_pipe;
 	pthread_t tid;
 	int *thread_args;
 	
@@ -145,10 +145,7 @@ int main(int argc, char* argv[]){
 		pthread_create(&tid, NULL, connection, (void *) thread_args);
 		pthread_detach(tid);
 	}
-
-	free(thread_args);
-	
-    return connection();
+	return EXIT_SUCCESS;
 }
 
 void ignore(){
