@@ -13,7 +13,13 @@
 int port;
 int cache_size; // in megabytes
 
-char *cache;
+typedef struct cache_entry{
+    char* data;
+    int size;
+
+    struct cache_entry *next, *prev;
+} cache_entry;
+
 
 int connection(){
     int sock;
@@ -100,8 +106,6 @@ int main(int argc, char* argv[]){
         perror("please use a port number between 1024 and 65535");
         return -1;
     }
-
-    cache = (char*)malloc(cache_size*MB);
 
     return connection();
 }
