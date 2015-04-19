@@ -227,6 +227,28 @@ void *parseRequest(void* args){
     return 0;
 }
 
+/* this function is for passing bytes from origin server to client */
+void *forwarder(void* args)
+{
+	int serverfd, clientfd;
+	int byteCount=0,numBytesRead, numBytesWritten= 0;
+	char buf1[BUF_SIZE];
+	clientfd = ((int*)args)[0];
+	serverfd = ((int*)args)[1];
+	free(args);
+	
+	while(1) {
+		numBytesRead = (int)Read(serverfd, buf1, BUF_SIZE);
+		
+		numBytesWritten = (int)Write(clientfd, buf1, numBytesRead);
+		if(numBytesRead<=0){
+			break;
+		}
+		byteCount+=numBytesWritten;
+	}
+	return NULL;
+}
+
 int main(int argc, char* argv[])
 {
 	int listenfd, connfd;
