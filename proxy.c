@@ -6,22 +6,100 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <errno.h>
+#include <pthread.h>
 
 #define MB 1000000
-#define MAX_LENGTH 512
+#define MAX_LENGTH 300
 
 int port;
 int cache_size; // in megabytes
 
-typedef struct cache_entry{
-    char* data;
-    int size;
+typedef enum {false, true} bool;
 
-    struct cache_entry *next, *prev;
+typedef struct cache_entry{
+    char* host;  //identifier for the entry
+    char* data;  //the data stored
+    int size;    //size of data stored
+
+    pthread_mutex_t mutex;
+
+    struct cache_entry *next;
+    struct cache_entry *prev;
 } cache_entry;
 
+cache_entry* cache;
+
+/*
+    add an item to the cache, dealing with LRU and size overflow
+*/
+int cache_addItem(char* host, char* data, int size){
+    cache_entry newItem;
+
+    newItem.host = (char*)malloc(strlen(host));
+    strcpy(newItem.host,host);
+    newItem.data = (char*)malloc(size);
+    strcpy(newItem.data,data); //now the data is set.
+
+    newItem.next = cache;
+    cache->prev = &newItem;
+    cache = &newItem;       //update the head with this new item
+
+    cache_entry *head = cache;
+    cache_entry *traverse = cache;
+
+    //see if we need to remove some items from the cache
+    long sizeAcc = 0;
+    bool freeItems = false;
+
+    while(traverse != NULL){
+        sizeAcc += traverse->size;
+        if(sizeAcc > MB * cache_size){
+            freeItems = true;
+        }
+
+        if(freeItems){ //delete the last items after an overflow
+            cache_entry *temp = traverse->next;
+            free(traverse->data);
+            free(traverse->host);
+            free(traverse);
+
+            traverse = temp;
+        }else {
+            traverse = traverse->next;
+        }
+    }
+}
+
+/*
+    get an item from the cache by searching for a specific hostname
+    a pointer to the data will be retured in *data.
+
+    returns 0 if the data is found, pointed to with data, -1 if not present
+
+    This will also handle re-ordering for lru
+*/
+int cache_getItem(char* host, char *data){
+    cache_entry *traverse = cache;
+    cache_entry *head = cache;
+
+    while(traverse!=NULL){
+        if(strcmp(host,traverse->host)==0){
+            //found the entry
+            data = traverse->data;
+            if(traverse!=head){
+
+            }
+
+            return 0;
+        }
+
+        traverse = traverse->next;
+    }
+    return -1;
+}
 
 int connection(){
+
     int sock;
     struct sockaddr_in addr;
     addr.sin_family = PF_INET;
