@@ -233,17 +233,46 @@ void *forwarder(void* args)
 	int serverfd, clientfd;
 	int byteCount=0,numBytesRead, numBytesWritten= 0;
 	char buf1[BUF_SIZE];
+	char *buf2 = (char *) malloc(4*BUF_SIZE*sizeof(char));
 	clientfd = ((int*)args)[0];
 	serverfd = ((int*)args)[1];
-	free(args);
+	char *url = &((char*)args)[2];
+	
 	
 	while(1) {
 		numBytesRead = (int)Read(serverfd, buf1, BUF_SIZE);
+		memcpy(buf2, buf1, numBytesRead);
 		numBytesWritten = (int)Write(clientfd, buf1, numBytesRead);
-		if(numBytesRead<=0){
+		
+		if(numBytesRead==0 && buf2!=NULL){
+			//EOF
+			//Add to the cache!
+			cache_addItem(url, buf2, byteCount);
+			//url variable was used
+			free(args);
+			break;
+		} else if (numBytesRead<0 || numBytesWritten<0) {
+			//error!
+			perror("numBytesRead or numBytesWritten error!");
+			break;
+		} else if (numBytesRead!=numBytesWritten){
+			printf("Read Write mismatch!");
 			break;
 		}
 		byteCount+=numBytesWritten;
+		
+		if(buf2!=NULL && byteCount*10 > cache_size*MB){
+			//Very big object that takes more than 10% of the cache.
+			//Do not cache.
+			free(buf2);
+			buf2 = NULL;
+		} else{
+			if(byteCount > 4*BUF_SIZE){
+				//double the size of the buffer.
+				realloc(buf2, byteCount*2);
+			}
+			memcpy(buf2 + byteCount - numBytesWritten, buf1, numBytesWritten);
+		}
 	}
 	return NULL;
 }
