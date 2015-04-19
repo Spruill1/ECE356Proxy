@@ -34,7 +34,7 @@ cache_entry* cache;
 /*
     add an item to the cache, dealing with LRU and size overflow
 */
-int cache_addItem(char* host, char* data, int size){
+void cache_addItem(char* host, char* data, int size){
     cache_entry newItem;
 
     newItem.host = (char*)malloc(strlen(host));
@@ -89,7 +89,15 @@ int cache_getItem(char* host, char *data){
             //found the entry
             data = traverse->data;
             if(traverse!=head){
+                traverse->prev->next = traverse->next;
+                if(traverse->next!=NULL){
+                    traverse->next->prev = traverse->prev;
+                }
 
+                traverse->next=head;
+                traverse->prev=NULL;
+                head->prev=traverse;
+                cache=traverse; //update the head
             }
 
             return 0;
