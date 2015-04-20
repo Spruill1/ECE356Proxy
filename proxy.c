@@ -348,14 +348,14 @@ void *forwarder(void* args)
 			//EOF
 			break;
 		}
-//		else if (numBytesRead<0 || numBytesWritten<0) {
-//			//error!
-//			perror("numBytesRead or numBytesWritten error!");
-//			break;
-//		} else if (numBytesRead!=numBytesWritten){
-//			printf("Read Write mismatch!");
-//			break;
-//		}
+		else if (numBytesRead<0 || numBytesWritten<0) {
+			//error!
+			perror("numBytesRead or numBytesWritten error!");
+			break;
+		} else if (numBytesRead!=numBytesWritten){
+			printf("Read Write mismatch!");
+			break;
+		}
 		
 		byteCount+=numBytesWritten;
 		
@@ -375,8 +375,8 @@ void *forwarder(void* args)
 	if(buf2!=NULL)
 		free(buf2);
 	free(args);
-	//shutdown(clientfd, 1);
-	//shutdown(serverfd, 1);
+	shutdown(clientfd, 1);
+	shutdown(serverfd, 1);
 	return NULL;
 }
 
