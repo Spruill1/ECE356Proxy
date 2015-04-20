@@ -55,6 +55,7 @@ int Read(int fd, void *ptr, size_t nbytes);
 int Readln(int fd, char *ptr, size_t nbytes);
 int Write(int fd, void *ptr, size_t nbytes);
 void removeField(char *s, char *field);
+void removeStr(char *s, char *value);
 int canCache(char *s);
 
 
@@ -252,12 +253,16 @@ void *parseRequest(void* args){
 	}
 	
 	//Get from cache
-	if(cache_getItem(url, data, &dataSize)>0){
-		//Found data!
-		Write(clientfd, data, dataSize);
-		shutdown(clientfd, 1);
-	}
+	//	if(cache_getItem(url, data, &dataSize)>0){
+	//		//Found data!
+	//		Write(clientfd, data, dataSize);
+	//		shutdown(clientfd, 1);
+	//	}
 	//Not in cache, hit server.
+	char buf3[BUF_SIZE];
+
+	strcpy(buf3, HTTP);
+	strcat(buf3, host);
 	
 	//Open connection with server
 	while((serverfd = open_connection(host, serverPort))<0){
@@ -269,12 +274,17 @@ void *parseRequest(void* args){
 		}
 	}
 	printf("SERVERFD1: %d\n", serverfd);
-
+	
 	
 	//remove unwanted tokens
 	removeField(buf1, FIELD_CONN);
 	removeField(buf1, FIELD_PROXY);
 	removeField(buf1, FIELD_KA);
+	
+	//make header relative
+	removeStr(buf1, buf3);
+	
+	numBytesWritten = Write(serverfd, buf1, strlen(buf1));
 	
 	//Receive the response from server and save it in the cache
 	thread_args = (char *)malloc(2*sizeof(int)+strlen(url)+1);
@@ -282,8 +292,6 @@ void *parseRequest(void* args){
 	((int *)thread_args)[1] = serverfd;
 	strcpy((char *)&(((int *)thread_args)[2]), url);
 	pthread_create(&tid, NULL, forwarder, (void *) thread_args);
-	
-	numBytesWritten = Write(serverfd, buf1, strlen(buf1));
 	
 	if(numBytesWritten<0){
 		printf("Get request header write failed!");
@@ -294,29 +302,26 @@ void *parseRequest(void* args){
 	//Write rest of the header
 	while(1){
 		if((numBytesRead=Read(clientfd, buf1, BUF_SIZE))<0){
-			printf("Error reading from connection: %s\n", strerror(errno));
-			cleanup(serverfd, clientfd);
-			return NULL;
+			printf("Error reading header from connection: %s\n", strerror(errno));
+			break;
 		}
 		if((numBytesWritten=Write(serverfd, buf1, numBytesRead))<0){
-			printf("Error reading from connection: %s\n", strerror(errno));
-			cleanup(serverfd, clientfd);
-			return NULL;
+			printf("Error writing header to connection: %s\n", strerror(errno));
+			break;
 		}
 		if(numBytesRead==0){
 			break;
 		}
 		if(numBytesRead!=numBytesWritten){
 			printf("Read Write mismatch!");
-			cleanup(serverfd, clientfd);
-			return NULL;
+			break;
 		}
 	}
 	
 	
 	
 	//cleanup
-	cleanup(serverfd, clientfd);
+	//cleanup(serverfd, clientfd);
 	pthread_join(tid, NULL);
 	return NULL;
 }
@@ -330,41 +335,27 @@ void *forwarder(void* args)
 	char *buf2 = (char *) malloc(4*BUF_SIZE*sizeof(char));
 	clientfd = ((int*)args)[0];
 	serverfd = ((int*)args)[1];
-	char *url = &((char*)args)[2];
+	char *url = (char *)&((int*)args)[2];
 	
 	
 	printf("SERVERFD2: %d\n", serverfd);
-
+	
 	while(1) {
 		numBytesRead = (int)Read(serverfd, buf1, BUF_SIZE);
 		numBytesWritten = (int)Write(clientfd, buf1, numBytesRead);
 		
-		if(numBytesRead==0 && buf2!=NULL){
+		if(numBytesRead<=0){
 			//EOF
-			//Add to the cache!
-			cache_addItem(url, buf2, byteCount);
-			free(buf2);
-			//url variable was used
-			free(args);
-			shutdown(clientfd,1);
-			shutdown(serverfd,1);
-			break;
-		} else if (numBytesRead<0 || numBytesWritten<0) {
-			//error!
-			perror("numBytesRead or numBytesWritten error!");
-			free(buf2);
-			free(args);
-			shutdown(clientfd,1);
-			shutdown(serverfd,1);
-			break;
-		} else if (numBytesRead!=numBytesWritten){
-			printf("Read Write mismatch!");
-			free(buf2);
-			free(args);
-			shutdown(clientfd,1);
-			shutdown(serverfd,1);
 			break;
 		}
+//		else if (numBytesRead<0 || numBytesWritten<0) {
+//			//error!
+//			perror("numBytesRead or numBytesWritten error!");
+//			break;
+//		} else if (numBytesRead!=numBytesWritten){
+//			printf("Read Write mismatch!");
+//			break;
+//		}
 		
 		byteCount+=numBytesWritten;
 		
@@ -381,8 +372,11 @@ void *forwarder(void* args)
 			memcpy(buf2 + byteCount - numBytesWritten, buf1, numBytesWritten);
 		}
 	}
-	shutdown(clientfd,1);
-	shutdown(serverfd,1);
+	if(buf2!=NULL)
+		free(buf2);
+	free(args);
+	//shutdown(clientfd, 1);
+	//shutdown(serverfd, 1);
 	return NULL;
 }
 
@@ -562,24 +556,22 @@ int open_connection(char *host, int port)
 	return targetfd;
 }
 
-void replaceField(char *s, char *field, char *value){
-	int len;
-	char *endline;
-	if((s=strstr(s,field))!=NULL)
-		endline = strstr(s, "\r\n");
-	len = endline-s+2;
-	memmove(s,s+len, strlen(s)-len+1);
+void removeStr(char *s, char *value){
+	int len = strlen(value);
+	char *start;
+	if((start=strstr(s,value))!=NULL)
+		memmove(start,start+len, strlen(s)-(start-s)-len+1);
 	
 }
 
 void removeField(char *s, char *field)
 {
 	int len;
-	char *endline;
-	if((s=strstr(s,field))!=NULL){
-		if((endline = strstr(s, "\r\n"))!=NULL){
-			len = endline-s+2;
-			memmove(s,s+len, strlen(s)-len+1);
+	char *start, *endline;
+	if((start=strstr(s,field))!=NULL){
+		if((endline = strstr(start, "\r\n"))!=NULL){
+			len = endline-start+2;
+			memmove(start,start+len, strlen(s)-(start-s)-len+1);
 		}
 	}
 }
