@@ -11,13 +11,17 @@
 #include <pthread.h>
 
 #define MB					1000000
-#define BUF_SIZE			1024
+#define MAXTRIES			10
+#define BUF_SIZE			8192
 #define METHOD_BUF_SIZE		20
 #define VER_BUF_SIZE		10
 
 #define CONNECT			"CONNECT"
 #define GET				"GET"
 #define POST			"POST"
+#define HTTP			"http://"
+#define HTTPS			"https://"
+#define HOST			"Host: "
 
 int port;
 int cache_size; // in megabytes
@@ -41,6 +45,7 @@ cache_entry* cache;
 //Method Declarations
 void ignore_sigpipe();
 int Read(int fd, void *ptr, size_t nbytes);
+int Readln(int fd, char *ptr, size_t nbytes);
 int Write(int fd, void *ptr, size_t nbytes);
 
 
@@ -128,103 +133,93 @@ int cache_getItem(char* host, char *data){
     return -1;
 }
 
+int parseUrl(char *host, int *port, char *url){
+	char buf[BUF_SIZE], *token;
+
+	if (strncasecmp(url, HTTP, 7) == 0) {
+		//remove http
+		strcpy(buf, url+7);
+		//parse host
+		token = strtok(buf, ":/\r\n");
+		if(token==NULL){
+			printf("Could not parse host token!");
+			return -1;
+		}
+		strcpy(host, token);
+		token = strtok(NULL, "/");
+		
+		if(token==NULL){
+			return 0;
+		}
+		
+		if(*token==':'){
+			*port = atoi(token+1);
+			return 1;
+		} else
+			return 0;
+	}
+	return -1;
+}
+
 
 void *parseRequest(void* args){
-	int clientfd;
-	char buf[BUF_SIZE], method[METHOD_BUF_SIZE], url[BUF_SIZE], path[BUF_SIZE], version[VER_BUF_SIZE];
+	int clientfd, numBytesRead, serverPort=-1;
+	char buf1[BUF_SIZE], buf2[BUF_SIZE], method[METHOD_BUF_SIZE], url[BUF_SIZE], version[VER_BUF_SIZE], host[BUF_SIZE];
 	char* token;
  
 	//record ards and free
 	clientfd = ((int*)args)[0];
 	free(args);
 	
-	if((Read(clientfd, buf, BUF_SIZE))<0){
+	if((numBytesRead=Read(clientfd, buf1, BUF_SIZE))<0){
 		printf("Error reading from connection: %s\n", strerror(errno));
+		return NULL;
+	}
+	//Copy array for strtok
+	strcpy(buf2, buf1);
+	
+	printf("Incoming Request: %s\n", buf1);
+	//Extract Method
+	token = strtok(buf2, " ");
+	if(token==NULL){
+		printf("Could not parse method token!");
+		return NULL;
+	}
+	strcpy(method, token);
+	//Extract url
+	token = strtok(NULL, " ");
+	if(token==NULL){
+		printf("Could not parse URL token!");
+		return NULL;
+	}
+	strcpy(url, token);
+	//Extract http version
+	token = strtok(NULL, " ");
+	if(token==NULL){
+		printf("Could not parse version token!");
+		return NULL;
+	}
+	strcpy(version, token);
+	
+	if(parseUrl(host, &serverPort, url)<0){
+		//could not find host in url, find host in request
+		char *hostbegin, *hostend, urlbuf[BUF_SIZE];
+		strcpy(urlbuf, url);
+		if((hostbegin = strcasestr(buf1, HOST)) != NULL){
+			//find end of host string
+			hostbegin = hostbegin + 6;
+			hostend = strstr(hostbegin, "\r\n");
+			strlcpy(host, hostbegin, hostend-hostbegin);
+		}
+		
+		//Rebuild url, prepend host
+		sprintf(url, "%s%s", host, urlbuf);
 	}
 	
-	
-	printf("String: %s\n", buf);
-	
-	token = strtok(buf," ");
-	if(token==NULL){perror("could not get method\n");return NULL;}
-	strcpy(method,token);
-	
-	token = strtok(buf," ");
-	if(token==NULL){perror("could not get URL\n");return NULL;}
-	strcpy(url,token);
-
-	
-	
-//
-//    int sock;
-//    struct sockaddr_in addr;
-//    addr.sin_family = PF_INET;
-//    addr.sin_addr.s_addr = INADDR_ANY;
-//    addr.sin_port = htons(port);
-//
-//    if((sock = socket(PF_INET, SOCK_STREAM, 0)) < 0){
-//        perror("Could not create socket");
-//        return -1;
-//    }
-//    if((bind(sock, (struct sockaddr *) &addr, sizeof(addr))) < 0) {
-//        perror("Could not bind socket");
-//        return -1;
-//    }
-//    if((listen(sock,10))<0){
-//        perror("Could not listen");
-//        return -1;
-//    }
-//
-//    //handle incoming connections
-//    int rec;
-//    socklen_t length;  //it's just an unsigned int under the hood
-//    while(1){
-//        if((rec = accept(sock, (struct sockaddr*) &addr, &length)) < 0){
-//            perror("Error accepting connection");
-//            return -1;
-//        }
-//
-//        pid_t pid = fork();
-//        if(pid < 0){
-//            perror("Error forking");
-//            return -1;
-//        }
-//        if(pid == 0){
-//            //we are in the child process
-//            /*
-//                Read the HTTP request from the socket and make a connection to the
-//                specified server
-//
-//                then go into a while loop that will maintain a connection until there
-//                is no more data to pull or the client connection closes
-//            */
-//            char buf[MAX_LENGTH];
-//            if((read(rec, buf, MAX_LENGTH))<0){
-//                printf("Error reading from connection: %s\n", strerror(errno));
-//            }
-//
-//            char* token;
-//            char method[MAX_LENGTH], url[MAX_LENGTH], path[MAX_LENGTH], version[MAX_LENGTH];
-//
-//            printf("String: %s\n", buf);
-//
-//            token = strtok(buf," ");
-//            if(token==NULL){perror("could not get method\n");return -1;}
-//            strcpy(method,token);
-//
-//            token = strtok(buf," ");
-//            if(token==NULL){perror("could not get URL\n");return -1;}
-//            strcpy(url,token);
-//
-//
-//
-//        }
-//        if(pid > 0){
-//            //we are in the parent process
-//        }
-//    }
-//
-    return 0;
+	if(strncasecmp(method, GET, 3)==0){
+		
+	}
+	return NULL;
 }
 
 /* this function is for passing bytes from origin server to client */
@@ -288,8 +283,6 @@ int main(int argc, char* argv[])
 	int listenfd, connfd;
 	socklen_t clientlen;
 	struct sockaddr_in clientaddr;
-	struct hostent *hp;
-	char *haddrp;
 	pthread_t tid;
 	int *thread_args;
 
@@ -373,37 +366,27 @@ int Read(int fd, void *ptr, size_t nbytes)
 }
 
 //Reads Line
-int Readln(int fd, void *ptr, size_t nbytes)
+int Readln(int fd, char *buf, size_t nbytes)
 {
-	int n;
-	while(1){
-		if ((n = read(fd, ptr, nbytes)) < 0) {
-			if (errno == EINTR) continue;
-		}
-		break;
-	}
-	return n;
-//	Example
+	int n, num_read;
+	char c, *bufp = buf;
 	
-//	int n, rc;
-//	char c, *bufp = usrbuf;
-//	
-//	n = 0;
-//	
-//	while (n < maxlen-1){
-//		if ((rc = rio_read(rp, &c, 1)) == 1) {
-//	  n++;
-//	  *bufp++ = c;
-//	  if (c == '\n')
-//		  break;
-//		} else if (rc == 0) {
-//	  break;    /* EOF */
-//		} else
-//	  return -1;	  /* error */
-//	}
-//	*bufp = 0;
-//	return n;
-//
+	n = 0;
+	
+	while (n < nbytes-1){
+	  if ((num_read = Read(fd, &c, 1)) == 1) {
+	  n++;
+	  *bufp++ = c;
+	  if (c == '\n')
+		  break;
+		} else if (num_read == 0) {
+	  break;    /* EOF */
+		} else
+	  return -1;	  /* error */
+	}
+	*bufp = 0;
+	return n;
+
 }
 
 //Write wrapper for handling EINTR
