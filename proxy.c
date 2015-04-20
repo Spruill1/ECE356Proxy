@@ -250,15 +250,21 @@ void *forwarder(void* args)
 			cache_addItem(url, buf2, byteCount);
 			//url variable was used
 			free(args);
+			shutdown(clientfd,1);
 			break;
 		} else if (numBytesRead<0 || numBytesWritten<0) {
 			//error!
 			perror("numBytesRead or numBytesWritten error!");
+			free(buf2);
+			free(args);
 			break;
 		} else if (numBytesRead!=numBytesWritten){
 			printf("Read Write mismatch!");
+			free(buf2);
+			free(args);
 			break;
 		}
+		
 		byteCount+=numBytesWritten;
 		
 		if(buf2!=NULL && byteCount*10 > cache_size*MB){
@@ -412,6 +418,5 @@ int Write(int fd, void *ptr, size_t nbytes)
 	}
 	return n;
 }
-
 
 
