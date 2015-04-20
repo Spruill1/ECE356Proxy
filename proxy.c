@@ -13,8 +13,8 @@
 #define MB					1000000
 #define MAXTRIES			10
 #define BUF_SIZE			8192
-#define METHOD_BUF_SIZE		32
-#define VER_BUF_SIZE		16
+#define METHOD_BUF_SIZE		20
+#define VER_BUF_SIZE		10
 
 #define CONNECT			"CONNECT"
 #define GET				"GET"
@@ -22,6 +22,11 @@
 #define HTTP			"http://"
 #define HTTPS			"https://"
 #define HOST			"Host: "
+#define FIELD_CONN      "Connection: "
+#define FIELD_PROXY		"Proxy-Connection: "
+#define FIELD_KA		"Keep-Alive: "
+
+#define CLOSE_CONN		"Connection: Close\r\n\r\n";
 
 int port;
 int cache_size; // in megabytes
@@ -31,7 +36,7 @@ typedef enum {false, true} bool;
 pthread_mutex_t cacheLock;
 
 typedef struct cache_entry{
-	char* host;  //identifier for the entry
+	char* url;  //identifier for the entry
 	char* data;  //the data stored
 	int size;    //size of data stored
 	
@@ -43,23 +48,25 @@ cache_entry* cache;
 
 
 //Method Declarations
+void *forwarder(void* args);
 void ignore_sigpipe();
-int open_connection(char *host, int port, char *ip);
+int open_connection(char *host, int port);
 int Read(int fd, void *ptr, size_t nbytes);
 int Readln(int fd, char *ptr, size_t nbytes);
 int Write(int fd, void *ptr, size_t nbytes);
 void removeField(char *s, char *field);
+int canCache(char *s);
 
 
 /*
  add an item to the cache, dealing with LRU and size overflow
  */
-void cache_addItem(char* host, char* data, int size){
+void cache_addItem(char* url, char* data, int size){
 	pthread_mutex_lock(&cacheLock);
 	cache_entry newItem;
 	
-	newItem.host = (char*)malloc(strlen(host));
-	strcpy(newItem.host,host);
+	newItem.url = (char*)malloc(strlen(url)+1);
+	strcpy(newItem.url,url);
 	newItem.data = (char*)malloc(size);
 	memcpy(newItem.data,data, size); //now the data is set.
 	
@@ -83,7 +90,7 @@ void cache_addItem(char* host, char* data, int size){
 		if(freeItems){ //delete the last items after an overflow
 			cache_entry *temp = traverse->next;
 			free(traverse->data);
-			free(traverse->host);
+			free(traverse->url);
 			free(traverse);
 			
 			traverse = temp;
@@ -102,16 +109,17 @@ void cache_addItem(char* host, char* data, int size){
  
  This will also handle re-ordering for lru
  */
-int cache_getItem(char* host, char *data){
+int cache_getItem(char* url, char *data, int *size){
 	pthread_mutex_lock(&cacheLock);
 	
 	cache_entry *traverse = cache;
 	cache_entry *head = cache;
 	
 	while(traverse!=NULL){
-		if(strcmp(host,traverse->host)==0){
+		if(strcmp(url,traverse->url)==0){
 			//found the entry
 			data = traverse->data;
+			*size = traverse->size;
 			if(traverse!=head){
 				
 				traverse->prev->next = traverse->next;
@@ -131,11 +139,12 @@ int cache_getItem(char* host, char *data){
 		
 		traverse = traverse->next;
 	}
+	data = NULL;
 	pthread_mutex_unlock(&cacheLock);
 	return -1;
 }
 
-int parseUrl(char *host, int *port, char *url, char *uri){
+int parseUrl(char *host, int *port, char *url){
 	char buf[BUF_SIZE], *token;
 	int httpmethod = -1;
 	
@@ -172,12 +181,17 @@ int parseUrl(char *host, int *port, char *url, char *uri){
 		*port = 80;
 	return 1;
 }
-
+void cleanup(int serverfd, int clientfd){
+	shutdown(clientfd, 1);
+	if(serverfd>0)
+		shutdown(serverfd, 1);
+}
 
 void *parseRequest(void* args){
-	int clientfd, serverfd, numBytesRead, serverPort=-1, tries=0;
-	char buf1[BUF_SIZE], buf2[BUF_SIZE], method[METHOD_BUF_SIZE], url[BUF_SIZE], uri[BUF_SIZE], version[VER_BUF_SIZE], host[BUF_SIZE], ip[METHOD_BUF_SIZE];
-	char* token;
+	int clientfd, serverfd, numBytesRead, numBytesWritten, serverPort=-1, tries=0, dataSize=-1;
+	char buf1[BUF_SIZE], buf2[BUF_SIZE], method[METHOD_BUF_SIZE], url[BUF_SIZE], version[VER_BUF_SIZE], host[BUF_SIZE], *token, *data, *thread_args;
+	pthread_t tid;
+
  
 	//record ards and free
 	clientfd = ((int*)args)[0];
@@ -185,6 +199,7 @@ void *parseRequest(void* args){
 	
 	if((numBytesRead=Read(clientfd, buf1, BUF_SIZE))<0){
 		printf("Error reading from connection: %s\n", strerror(errno));
+		cleanup(serverfd, clientfd);
 		return NULL;
 	}
 	//Copy array for strtok
@@ -195,6 +210,7 @@ void *parseRequest(void* args){
 	token = strtok(buf2, " ");
 	if(token==NULL){
 		printf("Could not parse method token!");
+		cleanup(serverfd, clientfd);
 		return NULL;
 	}
 	strcpy(method, token);
@@ -202,6 +218,7 @@ void *parseRequest(void* args){
 	token = strtok(NULL, " ");
 	if(token==NULL){
 		printf("Could not parse URL token!");
+		cleanup(serverfd, clientfd);
 		return NULL;
 	}
 	strcpy(url, token);
@@ -209,35 +226,90 @@ void *parseRequest(void* args){
 	token = strtok(NULL, " ");
 	if(token==NULL){
 		printf("Could not parse version token!");
+		cleanup(serverfd, clientfd);
 		return NULL;
 	}
 	strcpy(version, token);
 	
-	if(parseUrl(host, &serverPort, url, uri)<=0){
+	if(parseUrl(host, &serverPort, url)<=0){
 		//could not find host in url, find host in request
 		char *hostbegin, *hostend, urlbuf[BUF_SIZE];
 		if((hostbegin = strcasestr(buf1, HOST)) != NULL){
 			//find end of host string
 			hostbegin = hostbegin + 6;
-			hostend = strstr(hostbegin, "\r\n");
-			strlcpy(host, hostbegin, hostend-hostbegin);
+			if((hostend = strstr(hostbegin, "\r\n"))!=NULL)
+			   strlcpy(host, hostbegin, hostend-hostbegin);
 		}
+		//Rebuild url, prepend host
+		sprintf(url, "%s%s", host, urlbuf);
 	}
 	
 	if(strncasecmp(method, GET, 3)==0){
-		//Get
+		//Get from cache
+		if(cache_getItem(url, data, &dataSize)>0){
+			//Found data!
+			Write(clientfd, data, dataSize);
+			shutdown(clientfd, 1);
+		}
+		//Not in cache, hit server.
+		
 		//Open connection with server
-		while((serverfd = open_connection(host, serverPort, ip))<0){
+		while((serverfd = open_connection(host, serverPort))<0){
 			tries++;
 			if(tries==MAXTRIES){
 				printf("Max Number of attempts reached(10)");
+				cleanup(serverfd, clientfd);
 				return NULL;
 			}
 		}
 		
-		//Find server ip for caching
+		//remove unwanted tokens
+		removeField(buf1, FIELD_CONN);
+		removeField(buf1, FIELD_PROXY);
+		removeField(buf1, FIELD_KA);
+		
+		//Receive the response from server and save it in the cache
+		thread_args = (char *)malloc(2*sizeof(int)+strlen(url)+1);
+		thread_args[0] = clientfd;
+		thread_args[1] = serverfd;
+		strcpy(&thread_args[2], url);
+		pthread_create(&tid, NULL, forwarder, (void *) thread_args);
+
+		numBytesWritten = Write(serverfd, buf1, strlen(buf1));
+		
+		if(numBytesWritten<0){
+			printf("Get request header write failed!");
+			cleanup(serverfd, clientfd);
+			return NULL;
+		}
+		
+		//Write rest of the header
+		while(1){
+			if((numBytesRead=Read(clientfd, buf1, BUF_SIZE))<0){
+				printf("Error reading from connection: %s\n", strerror(errno));
+				cleanup(serverfd, clientfd);
+				return NULL;
+			}
+			if((numBytesWritten=Write(serverfd, buf1, numBytesRead))<0){
+				printf("Error reading from connection: %s\n", strerror(errno));
+				cleanup(serverfd, clientfd);
+				return NULL;
+			}
+			if(numBytesRead==0){
+				break;
+			}
+			if(numBytesRead!=numBytesWritten){
+				printf("Read Write mismatch!");
+				cleanup(serverfd, clientfd);
+				return NULL;
+			}
+		}
 		
 	}
+	
+	//cleanup
+	cleanup(serverfd, clientfd);
+	pthread_join(tid, NULL);
 	return NULL;
 }
 
@@ -255,27 +327,32 @@ void *forwarder(void* args)
 	
 	while(1) {
 		numBytesRead = (int)Read(serverfd, buf1, BUF_SIZE);
-		memcpy(buf2, buf1, numBytesRead);
 		numBytesWritten = (int)Write(clientfd, buf1, numBytesRead);
 		
 		if(numBytesRead==0 && buf2!=NULL){
 			//EOF
 			//Add to the cache!
 			cache_addItem(url, buf2, byteCount);
+			free(buf2);
 			//url variable was used
 			free(args);
 			shutdown(clientfd,1);
+			shutdown(serverfd,1);
 			break;
 		} else if (numBytesRead<0 || numBytesWritten<0) {
 			//error!
 			perror("numBytesRead or numBytesWritten error!");
 			free(buf2);
 			free(args);
+			shutdown(clientfd,1);
+			shutdown(serverfd,1);
 			break;
 		} else if (numBytesRead!=numBytesWritten){
 			printf("Read Write mismatch!");
 			free(buf2);
 			free(args);
+			shutdown(clientfd,1);
+			shutdown(serverfd,1);
 			break;
 		}
 		
@@ -294,6 +371,8 @@ void *forwarder(void* args)
 			memcpy(buf2 + byteCount - numBytesWritten, buf1, numBytesWritten);
 		}
 	}
+	shutdown(clientfd,1);
+	shutdown(serverfd,1);
 	return NULL;
 }
 
@@ -303,11 +382,7 @@ int main(int argc, char* argv[])
 	socklen_t clientlen;
 	struct sockaddr_in clientaddr;
 	pthread_t tid;
-	int *thread_args;
-	char test[280] = "GET /tutorials/other/top-20-mysql-best-practices/ HTTP/1.1\r\nHost: net.tutsplus.com\r\nUser-Agent: Mozilla/5.0 (Windows; U; Windows NT 6.1; en-US; rv:1.9.1.5) Gecko/20091102 Firefox/3.5.5 (.NET CLR 3.5.30729)\r\nAccept-Language: en-us,en;q=0.5\r\nAccept-Encoding: gzip,deflate\r\n";
-	removeField(test, "Accept-Encoding");
-	printf("%s", test);
-	
+	int *thread_args;	
 	
 	if(argc != 3) {
 		errno = EINVAL;
@@ -425,7 +500,7 @@ int Write(int fd, void *ptr, size_t nbytes)
 	return n;
 }
 
-int open_connection(char *host, int port, char *ip)
+int open_connection(char *host, int port)
 {
 	int targetfd;
 	struct hostent *hp;
@@ -446,11 +521,18 @@ int open_connection(char *host, int port, char *ip)
 	/* Establish a connection with the server */
 	if (connect(targetfd, (struct sockaddr *) &serveraddr, sizeof(serveraddr)) < 0)
 		return -1;
-	inet_ntop(AF_INET, &(serveraddr.sin_addr), ip, INET_ADDRSTRLEN);
 	return targetfd;
 }
 
+void replaceField(char *s, char *field, char *value){
+	int len;
+	char *endline;
+	if((s=strstr(s,field))!=NULL)
+		endline = strstr(s, "\r\n");
+	len = endline-s+2;
+	memmove(s,s+len, strlen(s)-len+1);
 
+}
 
 void removeField(char *s, char *field)
 {
@@ -460,7 +542,13 @@ void removeField(char *s, char *field)
 		endline = strstr(s, "\r\n");
 	len = endline-s+2;
 	memmove(s,s+len, strlen(s)-len+1);
-	
+}
+
+int canCache(char *s){
+	if((s=strstr(s,"no-cache"))!=NULL){
+		return -1; //NO!
+	}
+	return 1;
 }
 
 
