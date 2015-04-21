@@ -287,19 +287,17 @@ void *parseRequest(void* args){
     data = (char*)malloc((MB*cache_size/10)+1);
     if(cache_getItem(url, data, &dataSize)==0){
         //Found data!
-        printf("READ CACHE!: %s\n",url);
         int writtenBytes = 0;
 
         while(writtenBytes < dataSize){
             int currWrittenBytes = Write(clientfd, data, dataSize);
-            printf("datasize: %d\tcurrWrittenBytes: %d\twrittenBytes: %d\n",dataSize, currWrittenBytes, writtenBytes);
+            printf("READ CACHE: %s\tdatasize: %d\tcurrWrittenBytes: %d\twrittenBytes: %d\n",url,dataSize, currWrittenBytes, writtenBytes);
 
             free(data);
             if(currWrittenBytes < 1){//eof found
                 printf("writing to client failed: %s\n", strerror(errno));
                 break;
             }else{
-                printf("blocking");
                 writtenBytes+=currWrittenBytes;
             }
         }
